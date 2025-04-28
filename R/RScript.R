@@ -1,0 +1,3450 @@
+##### Read Me####
+## Greetings to you! Thank you for installing the African Synthesis source code.
+## This code is structured such that you should be able to click "run" and walk
+## away while the computer runs through the script. The time to completion should
+## be roughly 3 days with a fairly standard computer, less for more powerful
+## systems. This script requires an online connection in order to install
+## necessary packages and database files.
+
+#### Package and Data Loading####
+## In this section, we will be loading all relevant packages used in the
+## remaining code. This includes critical functions and commands that the script
+## relies on to work properly.
+
+# Retrieve Ratepol package from github
+devtools::install_github("HOPE-UIB-BIO/R-Ratepol-package")
+
+# If asked to update, this will select the "all" option.
+1
+
+# The following packages are used in the script
+library(remotes) # For installing packages from GitHub
+library(tidyverse) # For formatting dataframes into tibbles to
+library(dplyr) # For modifying tibbles in tandem with tidyverse
+library(ggplot2) # For data plotting
+library(Bchron) # For age depth modeling
+library(gridExtra) # Grid panels for multi-plot figures
+library(RRatepol) # For data analysis
+library(RFossilpol) # For data collection, organization, and output
+
+#### Create Output Directory####
+## This will establish an outputs folder within machine's working directory
+# Get working directory to save all files
+working_directory <- getwd()
+
+# Define paths for outputs in the script
+output_folder <- file.path(working_directory, "African_Synthesis")
+Sequence_Output <- file.path(output_folder, "Sequence_Output")
+Sequence_Output_CSV <- file.path(Sequence_Output, "CSVs")
+Sequence_Output_Plots <- file.path(Sequence_Output, "Site_RoC_Sequences")
+Summary_Output <- file.path(output_folder, "Summary_Plots")
+Continental_Output <- file.path(Summary_Output, "Continental")
+Regional_Output <- file.path(Summary_Output, "Regional")
+Charcoal_Output <- file.path(output_folder, "Charcoal_Plots")
+Climate_Output <- file.path(output_folder, "Climate_Plots")
+Climate_Downloads <- file.path(Climate_Output, "Climate_Downloads")
+Resampling_Output <- file.path(output_folder, "Resampling_Plots")
+PCA_Output <- file.path(output_folder, "Principal_Components_Analysis")
+
+# Check if the output folders exist. If not, this code will make them
+if (!dir.exists(output_folder)) {
+  dir.create(output_folder)
+}
+
+if (!dir.exists(Sequence_Output)) {
+  dir.create(Sequence_Output)
+}
+
+if (!dir.exists(Sequence_Output_CSV)) {
+  dir.create(Sequence_Output_CSV)
+}
+
+if (!dir.exists(Sequence_Output_Plots)) {
+  dir.create(Sequence_Output_Plots)
+}
+
+if (!dir.exists(Summary_Output)) {
+  dir.create(Summary_Output)
+}
+
+if (!dir.exists(Continental_Output)) {
+  dir.create(Continental_Output)
+}
+
+if (!dir.exists(Regional_Output)) {
+  dir.create(Regional_Output)
+}
+
+if (!dir.exists(Charcoal_Output)) {
+  dir.create(Charcoal_Output)
+}
+
+if (!dir.exists(Climate_Output)) {
+  dir.create(Climate_Output)
+}
+
+if (!dir.exists(Climate_Downloads)) {
+  dir.create(Climate_Downloads)
+}
+
+if (!dir.exists(Resampling_Output)) {
+  dir.create(Resampling_Output)
+}
+
+if (!dir.exists(PCA_Output)) {
+  dir.create(PCA_Output)
+}
+
+# Set the randomization seed for result replicability
+set.seed(42)
+
+#### Create Initial Data Table####
+## Here we will be selecting the data produced by RRatepol and reformatting it to
+## be used in the project
+
+# User must select the .rds file, produced by RRatepol, to access data for
+# analysis
+filtered_data <- readRDS(file.choose())
+
+# Save relevant information from the RRatepol data as its own CSV for use
+# in making published tables
+filtdf_table <- filtered_data %>% select(
+  dataset_id, siteid, sitename, handle,
+  lat, long, altitude, age_max, age_min,
+  doi
+)
+colnames(filtdf_table) <- c(
+  "dataset_id", "siteid", "sitename", "handle",
+  "site_lat", "site_lon", "altitude", "age_max",
+  "age_min", "doi"
+)
+# Name the file in your directory
+directory <- file.path(output_folder, "Data_Table.csv")
+write.csv(filtdf_table, directory, row.names = FALSE)
+
+# Create a tibble from the RRatepol data, renaming variables for clarity
+data <- tibble(
+  dataset.id = filtdf_table$dataset_id,
+  collection.handle = filtdf_table$handle,
+  site_lat = filtdf_table$site_lat,
+  site_lon = filtdf_table$site_lon,
+  pollen_data = filtered_data$counts_harmonised,
+  sample_age = filtered_data$levels,
+  age_uncertainty = filtered_data$age_uncertainty
+)
+
+# Remove extra columns and make a data frame for a less-comprehensive and more
+# readable form
+filtdf <- as.data.frame(filtdf_table %>% select(
+  dataset_id, sitename, handle,
+  site_lat, site_lon
+))
+
+# Plot Africa w/All Data Points as an svg for scalability and ease of use in
+# figures
+g <- paste(output_folder, "/African_Data_Points", ".svg", sep = "")
+svg(g,
+  width = 8, height = 7,
+  bg = "white"
+)
+filtdf %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat
+    )
+  ) +
+  ggplot2::borders(
+    fill = "gray90",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 2
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 2
+  ) +
+  ggplot2::coord_quickmap(
+    xlim = c(-16, 60), # Africa ROI
+    ylim = c(-35, 37)
+  ) +
+  ggplot2::labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  ggplot2::theme_classic()
+dev.off()
+
+#### Sequences and Peak Points####
+## This section sets up the functions used for calculating the RoC sequences and
+## Peak Points for each dataset. These are then compiled into a singular dataset
+## for use in the next section.
+
+# This is the RoC estimation function that creates an RoC sequence for each data
+# point based on the pollen data. Will fail for sites with age bounds that are
+# less than 500 years. When written as a function, this command can be easily
+# looped!
+SeqGen <- function(a, b, c) {
+  RRatepol::estimate_roc(
+    data_source_community = a,
+    data_source_age = b,
+    dissimilarity_coefficient = "chisq", # Chi-Squared
+    working_units = "MW", # Moving Window approach
+    bin_size = 500, # Bin size, in years, for computation
+    number_of_shifts = 5, # Moving window frames within bin
+    time_standardisation = 500, # Output bin size
+    smooth_method = "shep",
+    standardise = TRUE,
+    n_individuals = 150, # Number of required pollen grains
+    rand = 10000, # Default 10000
+    use_parallel = TRUE,
+    age_uncertainty = c
+  )
+}
+
+# Compute peak points, where RoCs are higher at a sudden pace. When written into
+# a function, it is much easier to loop!
+PeakGen <- function(d) {
+  RRatepol::detect_peak_points(
+    data_source = d,
+    sel_method = "trend_non_linear"
+  )
+}
+
+# Loop for plotting the RoC sequences and finding their Peak Points.
+# Looping lik this makes it seamless to incorporate more data at a later date.
+# This loop will also save the sequences for convenience and report errors for
+# any datasets not meeting requiured criteria outlined in the SeqGen function.
+# Expect this step to take approximately 30 minutes per dataset.
+for (i in 1:length(filtdf$dataset_id)) {
+  tryCatch(
+    {
+      # Get data for iteration i
+      a <- data$pollen_data[[i]]
+      b <- data$sample_age[[i]]
+      c <- data$age_uncertainty[[i]]
+      d <- data$dataset.id[[i]]
+      # Make file directory string based on the dataset.id for iteration i
+      h <- paste(Sequence_Output_CSV, "/", d, "_Sequence.csv", sep = "")
+      # Compute sequence tibble and assign variable
+      e <- assign(paste("sequence_", d, sep = ""), SeqGen(a, b, c))
+      # Compute sequence peaks tibble and assign variable
+      f <- assign(paste("sequence_peaks_", d, sep = ""), PeakGen(e))
+      # Write csv using variable f
+      write.csv(f, h, row.names = FALSE)
+    },
+    error = function(e) { # Catch and report errors while loop iterates
+      print(paste("error in iteration ", i))
+      d <- data$dataset.id[[i]]
+      h <- paste(Sequence_Output_CSV, "/", d, "_ERROR.csv", sep = "")
+      write_file("", h)
+    }
+  )
+}
+
+# Create new tibble so we can initialize the loop
+sequence_peaks <- list()
+dataset_id <- data$dataset.id
+
+# Loop each dataset to a tibble for later use
+for (i in seq_along(dataset_id)) {
+  tryCatch(
+    {
+      d <- data$dataset.id[[i]]
+      file_path <- paste0(Sequence_Output_CSV, "/", d, "_Sequence.csv")
+      h <- read.csv(file_path)
+
+      # Identify the dataset peaks to a tibble that can be combined with the data
+      # tibble
+      h <- h %>% mutate(dataset.id = data$dataset.id[[i]])
+      sequence_peaks <- sequence_peaks
+
+      # Combine data
+      sequence_peaks <- bind_rows(sequence_peaks, h)
+    },
+    error = function(e) {
+      print(paste("Error in iteration", i))
+    }
+  )
+}
+
+# Organize by combining the data and sequence_peaks tibbles, grouping them by
+# dataset.id
+sequence_peaks_data_tibble <- inner_join(data, sequence_peaks, by = "dataset.id")
+
+# Create a list of valid dataset ids for site results data
+seq_num <- unique(test$dataset.id)
+
+# New sequence_peaks variable for the next loop (as list)
+sequence_peaks <- list()
+
+# Repeat loop in list format so we can run the data through RRatepol
+for (i in seq_along(dataset_id)) {
+  d <- data$dataset.id[[i]]
+  file_path <- paste0(Sequence_Output_CSV, "/", d, "_Sequence.csv")
+  h <- read.csv(file_path)
+  sequence_peaks[[d]] <- h
+}
+
+# for (i in length(sequence_peaks)) {
+#   f = as.numeric(names(sequence_peaks[i]))
+#   g = paste(Sequence_Output_Plots,"/", f, "_SeqPoints.svg", sep = "")
+# #  h = paste("sequence_peaks$,'",as.numeric(f),"'", sep = "")
+#   svg(g,
+#     width =  8.5, height = 11,
+#     bg = "white")
+# RRatepol::plot_roc(
+#   data_source = sequence_peaks[[i]],
+#   peaks = TRUE,
+#   trend = "trend_non_linear")
+# dev.off()
+# }
+
+# Extract and save useful data as site results
+site_results <- data.frame(
+  dataset.id = data$dataset.id,
+  collection.handle = data$collection.handle,
+  site_lat = data$site_lat,
+  site_lon = data$site_lon,
+  stringsAsFactors = FALSE
+)
+
+# Identify datasets that failed to plot to show which were insufficient and which
+# are used in the analysis. TRUE indicates that the data has been plotted by
+# RRatepol
+site_results$Data_Plotted <- site_results$dataset.id %in% seq_num
+# Name the file in your directory
+directory <- file.path(output_folder, "Site_Sequence_Results.csv")
+write.csv(site_results, directory, row.names = FALSE)
+
+#### Plot Continental Statistics####
+## Here, the dataset, RoCs, and Peak Point Proportions are plotted
+
+# Assign each data point w/ specific time to a general time bin. Here, we will be
+# rounding all times up to the nearest multiple of 500. As a result, all modern
+# data will be grouped into the 500 time bin.
+time_bin <- 500 # Time bin size in years
+Data_RoC <- sequence_peaks_data_tibble %>%
+  unnest(cols = c(Age, Working_Unit, ROC, Peak)) %>%
+  # Time bins rounds up by default. To round down, change this line to
+  # Working_Unit = ceiling(Age / time_bin) * time_bin) - time_bin %>%
+  mutate(Working_Unit = ceiling(Age / time_bin) * time_bin) %>%
+  dplyr::select(
+    dataset.id,
+    collection.handle,
+    Age,
+    site_lat,
+    site_lon,
+    Working_Unit,
+    ROC,
+    Peak
+  )
+
+# Manipluate the Data_RoC tibble so the data is organized by working unit with
+# the RoC and Proportion statistics calculated
+Data_RoC_sum <-
+  Data_RoC %>%
+  group_by(Working_Unit) %>%
+  dplyr::summarise(
+    .groups = "keep",
+    N_samples = n(),
+    ROC_mean = mean(ROC),
+    ROC_median = median(ROC),
+    ROC_upq = quantile(ROC, 0.95),
+    ROC_sd = sd(ROC)
+  ) %>%
+  left_join(
+    .,
+    Data_RoC %>%
+      arrange(dataset.id) %>%
+      dplyr::select(dataset.id, Working_Unit, Peak) %>%
+      ungroup() %>%
+      group_by(dataset.id, Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        Peak_m = max(Peak)
+      ) %>%
+      group_by(Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        N = n(),
+        P_value_mean = mean(Peak_m),
+        P_value_sd = sd(Peak_m),
+        P_value_se = P_value_sd / sqrt(N)
+      ),
+    by = c("Working_Unit")
+  ) %>%
+  mutate(
+    P_value_mean = replace(P_value_mean, is.na(P_value_mean), 0),
+    P_value_sd = replace(P_value_sd, is.na(P_value_sd), 0)
+  )
+
+# Calculate the Proportions and add them to the sum variable
+P_Prop <- Data_RoC_sum$N / Data_RoC_sum$N_samples
+Data_RoC_sum <- cbind(Data_RoC_sum, P_Prop)
+colnames(Data_RoC_sum) <- c(
+  "Working_Unit", "N_samples", "ROC_mean",
+  "ROC_median", "ROC_upq", "ROC_sd", "N",
+  "P_value_mean", "P_value_sd", "P_value_se", "P_Prop"
+)
+
+# Time highlighting for plots to help interpret timing
+# Pleistocene
+backgroundP <- data.frame(xmin = 22500, xmax = 11700, ymin = -Inf, ymax = Inf)
+# Holocene
+backgroundH <- data.frame(xmin = 11700, xmax = 2500, ymin = -Inf, ymax = Inf)
+# Iron Age
+backgroundI <- data.frame(xmin = 2500, xmax = 0, ymin = -Inf, ymax = Inf)
+# Combine to make one variable
+background <- rbind(backgroundP, backgroundH, backgroundI)
+
+# Plot Data
+Data <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  #  ggtitle("Datasets per 500 Year Time Bin") +
+  geom_bar(
+    data = Data_RoC_sum, aes(x = Data_RoC_sum$Working_Unit, y = Data_RoC_sum$N),
+    stat = "identity"
+  ) +
+  xlab("Age (years BP)") +
+  ylab("Number of Datasets") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0)
+
+# This produces axis labels with superscript characters for this plot
+express <- expression("95"^"th" * " Quantile of RoC")
+
+# Plot ROCs
+ROCs <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  #  ggtitle("RoC Values per 500 Year Time Bin") +
+  xlab("Age (years BP)") +
+  ylab(express) +
+  geom_smooth(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  geom_line(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    color = "blue", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 13, face = "bold", hjust = 0.5)) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0.25, 1.5)
+
+# Not strictly necessary, but fits with prior uses
+express3 <- expression("Comparison Plot; Greenland Climate Record,
+                      Rate of Change, and Peak Point Proportions over
+                      500 Year Time Bins")
+
+# Plot Peak Points
+PeakPoints <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  #  ggtitle(express3) +
+  xlab("Age (years BP)") +
+  ylab("Proportion of Peak Points") +
+  geom_smooth(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "pink"
+  ) +
+  geom_line(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Data_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    color = "red", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 13, face = "bold", hjust = 0.5)) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0.185, 0.6)
+
+ggsave(
+  filename = file.path(Continental_Output, "Data.svg"), plot = Data,
+  width = 11, height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(Continental_Output, "ROCs.svg"), plot = ROCs,
+  width = 11, height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(Continental_Output, "PeakPoints.svg"),
+  plot = PeakPoints, width = 11, height = 8, dpi = 1000
+)
+
+#### Regional Analysis####
+## Following up on the Continental Analysis, all data is further divided into the
+## North, South, East, and West regions with RoCs and Peak Point Proportions
+## being calculated separately. This step offers insights into how these
+## ecosystems are changing that may be drowned out at scale.
+
+# Plot all sites on a map of Africa so we can visualize the data points
+# collected from Neotoma
+All_Sites <- Data_RoC %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat
+    )
+  ) +
+  ggplot2::borders(
+    fill = "gray90",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 2
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 2
+  ) +
+  ggplot2::coord_quickmap(
+    xlim = c(-16, 60),
+    ylim = c(-35, 37)
+  ) +
+  ggplot2::labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  #  ggtitle("All Sites") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm"))
+
+# Plot mainland Africa sites that are used in the regional analysis by excluding
+# Arabia and Madagascar records
+AfNOAM <- subset(Data_RoC, site_lon <= 40)
+Af_Sites <- AfNOAM %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat
+    )
+  ) +
+  ggplot2::borders(
+    fill = "gray90",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 2
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 2
+  ) +
+  ggplot2::coord_quickmap(
+    xlim = c(-16, 60),
+    ylim = c(-35, 37)
+  ) +
+  ggplot2::labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  #  ggtitle("Mainland Africa Sites")+
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm"))
+
+# Plot all North, South, East, and West Africa RoC, Proportions, numbers of
+# Datasets, and point maps for data visualization
+# North Africa
+North <- subset(AfNOAM, site_lat >= 10)
+NoNorth <- subset(AfNOAM, site_lat <= 10)
+unique(North$dataset.id)
+
+# Plot North African sites on a continental Africa map
+North_Map <- North %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat
+    )
+  ) +
+  ggplot2::borders(
+    fill = "gray90",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 2
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 2
+  ) +
+  ggplot2::coord_quickmap(
+    xlim = c(-16, 60),
+    ylim = c(-35, 37)
+  ) +
+  ggplot2::labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  # ggtitle("North Africa Sites") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm"))
+
+# Use this code if adding the Weight parameter
+# N_Mean_North = mean(North_RoC_sum$N)
+
+# Calculate the summary statistics for West Africa for use in plotting the RoC,
+# Peak Point Proportions, and number of datasets
+North_RoC_sum <-
+  North %>%
+  group_by(Working_Unit) %>%
+  dplyr::summarise(
+    .groups = "keep",
+    N_samples = n(),
+    # Weight = 1+n()/N_Mean_North,
+    ROC_mean = mean(ROC),
+    ROC_median = median(ROC),
+    ROC_upq = quantile(ROC, 0.95),
+    ROC_sd = sd(ROC)
+  ) %>%
+  left_join(
+    .,
+    North %>%
+      arrange(dataset.id) %>%
+      dplyr::select(dataset.id, Working_Unit, Peak) %>%
+      ungroup() %>%
+      group_by(dataset.id, Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        Peak_m = max(Peak)
+      ) %>%
+      group_by(Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        N = n(),
+        P_value_mean = mean(Peak_m),
+        P_value_sd = sd(Peak_m),
+        P_value_se = P_value_sd / sqrt(N)
+      ),
+    by = c("Working_Unit")
+  ) %>%
+  mutate(
+    P_value_mean = replace(P_value_mean, is.na(P_value_mean), 0),
+    P_value_sd = replace(P_value_sd, is.na(P_value_sd), 0)
+  )
+
+# Calculate the Proportions and add them to the summ variable
+P_Prop_North <- North_RoC_sum$N / North_RoC_sum$N_samples
+North_RoC_sum <- cbind(North_RoC_sum, P_Prop_North)
+colnames(North_RoC_sum) <- c(
+  "Working_Unit", "N_samples", "ROC_mean",
+  "ROC_median", "ROC_upq", "ROC_sd", "N",
+  "P_value_mean", "P_value_sd", "P_value_se", "P_Prop"
+)
+
+# The following differentiates time bins by the number of valid datasets (>=5)
+Valid_Bins <- North_RoC_sum %>%
+  filter(N >= 5)
+Invalid_Bins <- North_RoC_sum %>%
+  filter(N < 5)
+
+# This plots the peak point proportions for North Africa
+North_Proportions <- ggplot() +
+  geom_rect(
+    data = background, aes(
+      xmin = background[1, 1],
+      xmax = background[1, 2],
+      ymin = ymin, ymax = ymax
+    ),
+    fill = "skyblue", alpha = 0.1
+  ) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("North Africa") +
+  xlab("Age (years BP)") +
+  ylab("Proportion of Peak Points") +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "pink"
+  ) +
+  geom_line(
+    data = North_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "red", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0.15, 0.51)
+
+# This plots the RoC over time for North Africa
+North_RoC <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("North Africa") +
+  xlab("Age (years BP)") +
+  ylab(express) +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  geom_line(
+    data = North_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "blue", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 1.5)
+
+# This plots the number of datasets used in each time bin for North Africa
+North_Data <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("North Africa") +
+  geom_bar(data = North_RoC_sum, aes(
+    x = North_RoC_sum$Working_Unit,
+    y = North_RoC_sum$N
+  ), stat = "identity") +
+  xlab("Age (years BP)") +
+  ylab("Number of Datasets") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 30)
+
+# South Africa
+South <- subset(NoNorth, site_lat <= -15)
+NoSouth <- subset(NoNorth, site_lat >= -15)
+
+# Plot South African sites on a continental Africa map
+South_Map <- South %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat
+    )
+  ) +
+  ggplot2::borders(
+    fill = "gray90",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 2
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 2
+  ) +
+  ggplot2::coord_quickmap(
+    xlim = c(-16, 60),
+    ylim = c(-35, 37)
+  ) +
+  ggplot2::labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  #  ggtitle("South Africa Sites") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm"))
+
+# Use this code if adding the Weight parameter
+# N_Mean_South = mean(South_RoC_sum$N)
+
+# Calculate the summary statistics for South Africa for use in plotting the RoC,
+# Peak Point Proportions, and number of datasets
+South_RoC_sum <-
+  South %>%
+  group_by(Working_Unit) %>%
+  dplyr::summarise(
+    .groups = "keep",
+    N_samples = n(),
+    # Weight = 1+n()/N_Mean_South,
+    ROC_mean = mean(ROC),
+    ROC_median = median(ROC),
+    ROC_upq = quantile(ROC, 0.95),
+    ROC_sd = sd(ROC)
+  ) %>%
+  left_join(
+    .,
+    South %>%
+      arrange(dataset.id) %>%
+      dplyr::select(dataset.id, Working_Unit, Peak) %>%
+      ungroup() %>%
+      group_by(dataset.id, Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        Peak_m = max(Peak)
+      ) %>%
+      group_by(Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        N = n(),
+        P_value_mean = mean(Peak_m),
+        P_value_sd = sd(Peak_m),
+        P_value_se = P_value_sd / sqrt(N)
+      ),
+    by = c("Working_Unit")
+  ) %>%
+  mutate(
+    P_value_mean = replace(P_value_mean, is.na(P_value_mean), 0),
+    P_value_sd = replace(P_value_sd, is.na(P_value_sd), 0)
+  )
+
+# Calculate the Proportions and add them to the sum variable
+# (renamed automatically as ...11)
+P_Prop_South <- South_RoC_sum$N / South_RoC_sum$N_samples
+South_RoC_sum <- cbind(South_RoC_sum, P_Prop_South)
+colnames(South_RoC_sum) <- c(
+  "Working_Unit", "N_samples", "ROC_mean",
+  "ROC_median", "ROC_upq", "ROC_sd", "N",
+  "P_value_mean", "P_value_sd", "P_value_se", "P_Prop"
+)
+
+# The following differentiates time bins by the number of valid datasets (>=5)
+Valid_Bins <- South_RoC_sum %>%
+  filter(N >= 5)
+Invalid_Bins <- South_RoC_sum %>%
+  filter(N < 5)
+
+# This plots the peak point proportions for South Africa
+South_Proportions <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("South Africa") +
+  xlab("Age (years BP)") +
+  ylab("Proportion of Peak Points") +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "pink"
+  ) +
+  geom_line(
+    data = South_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "red", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0.15, 0.51)
+
+# This plots the RoC over time for South Africa
+South_RoC <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("South Africa") +
+  xlab("Age (years BP)") +
+  ylab(express) +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  geom_line(
+    data = South_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "blue", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 1.5)
+
+# This plots the number of datasets used in each time bin for South Africa
+South_Data <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("South Africa") +
+  geom_bar(data = South_RoC_sum, aes(
+    x = South_RoC_sum$Working_Unit,
+    y = South_RoC_sum$N
+  ), stat = "identity") +
+  xlab("Age (years BP)") +
+  ylab("Number of Datasets") +
+  theme_minimal() +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 30)
+
+# East Africa
+East <- subset(NoSouth, site_lon >= 25)
+
+# Plot East African sites on a continental Africa map
+East_Map <- East %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat
+    )
+  ) +
+  ggplot2::borders(
+    fill = "gray90",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 2
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 2
+  ) +
+  ggplot2::coord_quickmap(
+    xlim = c(-16, 60),
+    ylim = c(-35, 37)
+  ) +
+  ggplot2::labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  # ggtitle("East Africa Sites") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm"))
+
+# Use this code if adding the Weight parameter
+# N_Mean_East = mean(East_RoC_sum$N)
+
+# Calculate the summary statistics for East Africa for use in plotting the RoC,
+# Peak Point Proportions, and number of datasets
+East_RoC_sum <-
+  East %>%
+  group_by(Working_Unit) %>%
+  dplyr::summarise(
+    .groups = "keep",
+    N_samples = n(),
+    # Weight = 1+n()/N_Mean_East,
+    ROC_mean = mean(ROC),
+    ROC_median = median(ROC),
+    ROC_upq = quantile(ROC, 0.95),
+    ROC_sd = sd(ROC)
+  ) %>%
+  left_join(
+    .,
+    East %>%
+      arrange(dataset.id) %>%
+      dplyr::select(dataset.id, Working_Unit, Peak) %>%
+      ungroup() %>%
+      group_by(dataset.id, Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        Peak_m = max(Peak)
+      ) %>%
+      group_by(Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        N = n(),
+        P_value_mean = mean(Peak_m),
+        P_value_sd = sd(Peak_m),
+        P_value_se = P_value_sd / sqrt(N)
+      ),
+    by = c("Working_Unit")
+  ) %>%
+  mutate(
+    P_value_mean = replace(P_value_mean, is.na(P_value_mean), 0),
+    P_value_sd = replace(P_value_sd, is.na(P_value_sd), 0)
+  )
+
+# Calculate the Proportions and add them to the sum variable
+# (renamed automatically as ...11)
+P_Prop_East <- East_RoC_sum$N / East_RoC_sum$N_samples
+East_RoC_sum <- cbind(East_RoC_sum, P_Prop_East)
+colnames(East_RoC_sum) <- c(
+  "Working_Unit", "N_samples", "ROC_mean",
+  "ROC_median", "ROC_upq", "ROC_sd", "N",
+  "P_value_mean", "P_value_sd", "P_value_se", "P_Prop"
+)
+
+# The following differentiates time bins by the number of valid datasets (>=5)
+Valid_Bins <- East_RoC_sum %>%
+  filter(N >= 5)
+Invalid_Bins <- East_RoC_sum %>%
+  filter(N < 5)
+
+# This plots the peak point proportions for East Africa
+East_Proportions <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("East Africa") +
+  xlab("Age (years BP)") +
+  ylab("Proportion of Peak Points") +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "pink"
+  ) +
+  geom_line(
+    data = East_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "red", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0.15, 0.51)
+
+# This plots the RoC over time for East Africa
+East_RoC <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("East Africa") +
+  xlab("Age (years BP)") +
+  ylab(express) +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  geom_line(
+    data = East_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "blue", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 1.5)
+
+# This plots the number of datasets used in each time bin for East Africa
+East_Data <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("East Africa") +
+  geom_bar(data = East_RoC_sum, aes(
+    x = East_RoC_sum$Working_Unit,
+    y = East_RoC_sum$N
+  ), stat = "identity") +
+  xlab("Age (years BP)") +
+  ylab("Number of Datasets") +
+  theme_minimal() +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 30)
+
+# West Africa
+West <- subset(NoSouth, site_lon < 25)
+
+# Plot West African sites on a continental Africa map
+West_Map <- West %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat
+    )
+  ) +
+  ggplot2::borders(
+    fill = "gray90",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 2
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 2
+  ) +
+  ggplot2::coord_quickmap(
+    xlim = c(-16, 60),
+    ylim = c(-35, 37)
+  ) +
+  ggplot2::labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  #  ggtitle("West Africa Sites") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm"))
+
+# Use this code if adding the Weight parameter
+# N_Mean_West = mean(West_RoC_sum$N) #Use if weights are used
+
+# Calculate the summary statistics for West Africa for use in plotting the RoC,
+# Peak Point Proportions, and number of datasets
+West_RoC_sum <-
+  West %>%
+  group_by(Working_Unit) %>%
+  dplyr::summarise(
+    .groups = "keep",
+    N_samples = n(),
+    # Weight = 1+n()/N_Mean_West,
+    ROC_mean = mean(ROC),
+    ROC_median = median(ROC),
+    ROC_upq = quantile(ROC, 0.95),
+    ROC_sd = sd(ROC)
+  ) %>%
+  left_join(
+    .,
+    West %>%
+      arrange(dataset.id) %>%
+      dplyr::select(dataset.id, Working_Unit, Peak) %>%
+      ungroup() %>%
+      group_by(dataset.id, Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        Peak_m = max(Peak)
+      ) %>%
+      group_by(Working_Unit) %>%
+      dplyr::summarise(
+        .groups = "keep",
+        N = n(),
+        P_value_mean = mean(Peak_m),
+        P_value_sd = sd(Peak_m),
+        P_value_se = P_value_sd / sqrt(N)
+      ),
+    by = c("Working_Unit")
+  ) %>%
+  mutate(
+    P_value_mean = replace(P_value_mean, is.na(P_value_mean), 0),
+    P_value_sd = replace(P_value_sd, is.na(P_value_sd), 0)
+  )
+
+# Calculate the Proportions and add them to the summ variable
+# (renamed automatically as ...11)
+P_Prop_West <- West_RoC_sum$N / West_RoC_sum$N_samples
+West_RoC_sum <- cbind(West_RoC_sum, P_Prop_West)
+colnames(West_RoC_sum) <- c(
+  "Working_Unit", "N_samples", "ROC_mean",
+  "ROC_median", "ROC_upq", "ROC_sd", "N",
+  "P_value_mean", "P_value_sd", "P_value_se", "P_Prop"
+)
+
+# The following differentiates time bins by the number of valid datasets (>=5)
+Valid_Bins <- West_RoC_sum %>%
+  filter(N >= 5)
+Invalid_Bins <- West_RoC_sum %>%
+  filter(N < 5)
+
+# This plots the peak point proportions for West Africa
+West_Proportions <- ggplot() +
+  geom_rect(
+    data = background, aes(
+      xmin = background[1, 1],
+      xmax = background[1, 2],
+      ymin = ymin, ymax = ymax
+    ), fill = "skyblue",
+    alpha = 0.1
+  ) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("West Africa") +
+  xlab("Age (years BP)") +
+  ylab("Proportion of Peak Points") +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "pink"
+  ) +
+  geom_line(
+    data = West_RoC_sum, aes(x = Working_Unit, y = P_Prop),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "red", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = P_Prop),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0.15, 0.51)
+
+# This plots the RoC over time for West Africa
+West_RoC <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("West Africa") +
+  xlab("Age (years BP)") +
+  ylab(express) +
+  geom_smooth(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "black",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  geom_line(
+    data = West_RoC_sum, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Valid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "blue", shape = 15, stroke = 2
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "black", shape = 15, stroke = 3.5
+  ) +
+  geom_point(
+    data = Invalid_Bins, aes(x = Working_Unit, y = ROC_upq),
+    color = "gray", shape = 15, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 1.5)
+
+# This plots the number of datasets used in each time bin for West Africa
+West_Data <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("West Africa") +
+  geom_bar(data = West_RoC_sum, aes(
+    x = West_RoC_sum$Working_Unit,
+    y = West_RoC_sum$N
+  ), stat = "identity") +
+  xlab("Age (years BP)") +
+  ylab("Number of Datasets") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 30)
+
+# List all plot names and objects
+All_Plots <- list(
+  list("All_Sites.svg", All_Sites),
+  list("African_Sites.svg", Af_Sites),
+  list("North_Sites.svg", North_Map),
+  list("North_RoC_sum.svg", North_RoC),
+  list("North_Proportions.svg", North_Proportions),
+  list("North_Data.svg", North_Data),
+  list("East_Sites.svg", East_Map),
+  list("East_RoC_sum.svg", East_RoC),
+  list("East_Proportions.svg", East_Proportions),
+  list("East_Data.svg", East_Data),
+  list("South_Sites.svg", South_Map),
+  list("South_RoC_sum.svg", South_RoC),
+  list("South_Proportions.svg", South_Proportions),
+  list("South_Data.svg", South_Data),
+  list("West_Sites.svg", West_Map),
+  list("West_RoC_sum.svg", West_RoC),
+  list("West_Proportions.svg", West_Proportions),
+  list("West_Data.svg", West_Data)
+)
+
+Data_Grid <- grid.arrange(All_Sites, Data, nrow = 1)
+ROC_Grid <- grid.arrange(North_RoC, East_RoC, West_RoC, South_RoC, nrow = 2)
+Peak_Grid <- grid.arrange(North_Proportions, East_Proportions, West_Proportions,
+  South_Proportions,
+  nrow = 2
+)
+ggsave(
+  filename = file.path(Continental_Output, "Data_and_Map.svg"),
+  plot = Data_Grid, width = 20, height = 10, dpi = 2000
+)
+ggsave(
+  filename = file.path(Regional_Output, "Regional_RoC.svg"),
+  plot = ROC_Grid, width = 20, height = 10, dpi = 2000
+)
+ggsave(
+  filename = file.path(Regional_Output, "Regional_Peak_Points.svg"),
+  plot = Peak_Grid, width = 20, height = 10, dpi = 2000
+)
+
+# Save plot function
+save_plots <- function(plot_name, plot_object) {
+  ggsave(
+    filename = file.path(Regional_Output, plot_name), plot = plot_object,
+    width = 11, height = 8, dpi = 1000
+  )
+}
+
+# Loop and save each plot where the first column is the name file name and the
+# second column is the variable
+for (i in 1:(length(All_Plots))) {
+  save_plots(All_Plots[[i]][[1]], All_Plots[[i]][[2]])
+}
+
+#### Charcoal Analysis####
+## Charcoal could be a useful indicator for drivers of RoCs/Peak Points. Only a
+## handful of useful datasets are present in the East and South regions, but this
+## section could be updated to include a more comprehensive quantity of data in
+## the future.
+
+## East Charcoal
+# Open charcoal datasets [need to include this data in the code package or
+# something, no real way to optimize this I guess]
+Masoko <- read.csv("C:/Users/david/OneDrive/Desktop/ROC_Project_Master/
+                  Paleofire Data/Masoko.csv", header = TRUE)
+E965MPF <- read.csv("C:/Users/david/OneDrive/Desktop/ROC_Project_Master/
+                   Paleofire Data/E96-5M.csv", header = TRUE)
+E961PPF <- read.csv("C:/Users/david/OneDrive/Desktop/ROC_Project_Master/
+                   Paleofire Data/E96-1P.csv", header = TRUE)
+Rusaka_Swamp <- read.csv("C:/Users/david/OneDrive/Desktop/ROC_Project_Master/
+                        Paleofire Data/Rusaka Swamp.csv", header = TRUE)
+
+# Set up the dataframes, making all numbers integers so they function in future
+# commands
+MasokoAge <- as.integer(Masoko$Age.middle..cal.BP.)
+MasokoChar <- as.integer(Masoko$Quantity)
+Masoko <- data.frame(Age = MasokoAge, Char = MasokoChar)
+
+E965MPFAge <- as.integer(E965MPF$Age.middle..cal.BP.)
+E965MPFChar <- as.integer(E965MPF$Quantity)
+E965MPF <- data.frame(Age = E965MPFAge, Char = E965MPFChar)
+
+E961PPFAge <- as.integer(E961PPF$Age.middle..cal.BP.)
+E961PPFChar <- as.integer(E961PPF$Quantity)
+E961PPF <- data.frame(Age = E961PPFAge, Char = E961PPFChar)
+
+Rusaka_SwampAge <- as.integer(Rusaka_Swamp$Age.middle..cal.BP.)
+Rusaka_SwampChar <- as.integer(Rusaka_Swamp$Quantity)
+Rusaka_Swamp <- data.frame(Age = Rusaka_SwampAge, Char = Rusaka_SwampChar)
+
+# Use this to add a superscript to the axis title
+express1 <- expression("particles/cm"^"3")
+
+# Plot all charcoal datasets
+MasokoP <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_smooth(
+    data = Masoko, aes(x = Age, y = Char), method = "gam",
+    formula = y ~ s(x, k = 8, bs = "tp"), color = "blue", linewidth = .5,
+    se = TRUE, fill = "lightblue"
+  ) +
+  geom_point(data = Masoko, aes(x = Age, y = Char), color = "black") +
+  labs(x = "Age (years BP)", y = express1, title = "Masoko") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 35)
+
+E965MPFP <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_smooth(
+    data = E965MPF, aes(x = Age, y = Char), method = "gam",
+    formula = y ~ s(x, k = 8, bs = "tp"), color = "blue", linewidth = .5,
+    se = TRUE, fill = "lightblue"
+  ) +
+  geom_point(data = E965MPF, aes(x = Age, y = Char), color = "black") +
+  labs(x = "Age (years BP)", y = express1, title = "Lake Edward (E96-5M)") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0)
+
+Rusaka_SwampP <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_smooth(
+    data = Rusaka_Swamp, aes(x = Age, y = Char), method = "gam",
+    formula = y ~ s(x, k = 8, bs = "tp"), color = "blue", linewidth = .5,
+    se = TRUE, fill = "lightblue"
+  ) +
+  geom_point(data = Rusaka_Swamp, aes(x = Age, y = Char), color = "black") +
+  labs(x = "Age (years BP)", y = express1, title = "Rusaka Swamp") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 35)
+
+# Assemble Grid
+EastChar <- grid.arrange(MasokoP, Rusaka_SwampP, E965MPFP, ncol = 1)
+
+# Save
+ggsave(
+  filename = file.path(Charcoal_Output, "EastChar.svg"), plot = EastChar,
+  width = 16, height = 22, dpi = 1000
+)
+
+## South Charcoal
+# Open charcoal datasets
+Craigrossie <- read.csv("C:/Users/david/OneDrive/Desktop/ROC_Project_Master/
+                       Paleofire Data/Craigrossie.csv", header = TRUE)
+Rietvlei_Dam <- read.csv("C:/Users/david/OneDrive/Desktop/ROC_Project_Master/
+                        Paleofire Data/Rietvlei Dam.csv", header = TRUE)
+Wonderkrater_borehole_3 <- read.csv("C:/Users/david/OneDrive/Desktop/
+                                   ROC_Project_Master/Paleofire Data/
+                                   Wonderkrater borehole 3.csv", header = TRUE)
+
+# Set up the dataframes, making all numbers integers so they
+# function in future commands
+CraigrossieAge <- as.integer(Craigrossie$Age.middle..cal.BP.)
+CraigrossieChar <- as.integer(Craigrossie$Quantity)
+Craigrossie <- data.frame(Age = CraigrossieAge, Char = CraigrossieChar)
+
+Rietvlei_DamAge <- as.integer(Rietvlei_Dam$Age.middle..cal.BP.)
+Rietvlei_DamChar <- as.integer(Rietvlei_Dam$Quantity)
+Rietvlei_Dam <- data.frame(Age = Rietvlei_DamAge, Char = Rietvlei_DamChar)
+
+Wonderkrater_borehole_3Age <- as.integer(Wonderkrater_borehole_3$
+  Age.middle..cal.BP.)
+Wonderkrater_borehole_3Char <- as.integer(Wonderkrater_borehole_3$Quantity)
+Wonderkrater_borehole_3 <- data.frame(
+  Age = Wonderkrater_borehole_3Age,
+  Char = Wonderkrater_borehole_3Char
+)
+
+# Plot all charcoal datasets
+CraigrossieP <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_smooth(
+    data = Craigrossie, aes(x = Age, y = Char), method = "gam",
+    formula = y ~ s(x, k = 8, bs = "tp"), color = "blue", linewidth = .5,
+    se = TRUE, fill = "lightblue"
+  ) +
+  geom_point(data = Craigrossie, aes(x = Age, y = Char), color = "black") +
+  labs(x = "Age (years BP)", y = express1, title = "Craigrossie") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 35)
+
+Rietvlei_DamP <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_smooth(
+    data = Rietvlei_Dam, aes(x = Age, y = Char), method = "gam",
+    formula = y ~ s(x, k = 8, bs = "tp"), color = "blue", linewidth = .5,
+    se = TRUE, fill = "lightblue"
+  ) +
+  geom_point(data = Rietvlei_Dam, aes(x = Age, y = Char), color = "black") +
+  labs(x = "Age (years BP)", y = express1, title = "Rietvlei Dam") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 35)
+
+Wonderkrater_borehole_3P <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_smooth(
+    data = Wonderkrater_borehole_3, aes(x = Age, y = Char),
+    method = "gam", formula = y ~ s(x, k = 8, bs = "tp"), color = "blue",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  geom_point(
+    data = Wonderkrater_borehole_3, aes(x = Age, y = Char),
+    color = "black"
+  ) +
+  labs(x = "Age (years BP)", y = express1, title = "Wonderkrater Borehole 3") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(0, 35)
+
+# Assemble Grid and Save
+SouthChar <- grid.arrange(CraigrossieP, Rietvlei_DamP, Wonderkrater_borehole_3P,
+  ncol = 1
+)
+ggsave(
+  filename = file.path(Charcoal_Output, "SouthChar.svg"), plot = SouthChar,
+  width = 16, height = 22, dpi = 1000
+)
+
+#### Climate Plotting####
+## Climate data for the southern and northern hemispheres can help contextualize
+## the data we see in the RoCs and Peak Points. Here, we plot the delta-18 O
+## records from GISP2 and Taylor Dome.
+
+## Antarctica - Taylor Dome
+# Open Taylor Dome CSV. This data will help determine if the changes observed in
+# South Africa correspond to the climate change seen in the southern hemisphere
+
+# Steig, E.J.; Morse, D.L; Waddington, E.D.; Stuiver, M.; Grootes, P.M.
+# (2000-08-18): NOAA/WDS Paleoclimatology - Taylor Dome -
+# High Resolution Oxygen Isotope and 10Be Data. NOAA National Centers for
+# Environmental Information. https://doi.org/10.25921/5thv-mc68.
+# Accessed 04/26/2024.
+
+# URL of Taylor Dome to download the raw .txt file
+TaylorLink <- "https://www.ncei.noaa.gov/pub/data/paleo/icecore/antarctica/
+taylor/steig2000-hi18o_td-noaa.txt"
+
+# Create file pathway to identify the download and turn it into a csv
+TaylorDownload <- file.path(Climate_Downloads, "TaylorDome.csv")
+
+# Download Taylor Dome data
+download.file(TaylorLink, destfile = TaylorDownload, mode = "wb")
+
+# Read the Taylor Dome data that was downloaded
+TD <- read.csv(TaylorDownload, row.names = NULL)
+
+# Remove all unnecessary metadata
+TD <- TD[-(1:170), -2]
+
+# Convert TD to a connection
+TD_c <- textConnection(TD)
+
+# Read the Taylor Dome data and write it to itself
+TD <- read.delim(TD_c, sep = "\t", header = TRUE)
+
+# Close connection
+close(TD_c)
+
+# Remove the first column (depth data)
+TD <- TD[, -1]
+
+# Remove all rows with "NA" values (listed by authors as value 999999)
+TD <- TD[TD[, 2] != 999999, ]
+TD[, 1] <- TD[, 1] * 1000
+
+# Rename the data columns, the Taylor Dome variable is now ready for use
+TD <- setNames(TD, c("ï..Age", "del18.O"))
+
+# Overwrite installed file with the csv made in R
+directory <- file.path(Climate_Downloads, "TaylorDome.csv")
+write.csv(TD, directory, row.names = FALSE)
+
+# Plot d18 O values for Taylor Dome to observe changes in the southern hemisphere
+# that could explain RoC shifts in South Africa
+TDd18 <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  labs(x = "Age (years BP)", y = "d18 O (per mil)", title = "Antarctic d18 O") +
+  geom_smooth(
+    data = TD, aes(x = ï..Age, y = del18.O), method = "gam",
+    formula = y ~ s(x, k = 25, bs = "tp"), color = "black", linewidth = .5,
+    se = TRUE, fill = "lightblue"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(-45, -33.5)
+
+## Greenland - GISP2
+# Download the GISP2 data. This will help determine if the changes observed in
+# North, West, and East Africa correspond to the climate change seen in the
+# Northern hemisphere
+
+# P. M. Grootes, M. Stuiver. 1997. Oxygen 18/16 variability in Greenland snow and
+# ice with 10-3 to 10-5-year time resolution. Journal of Geophysical Research:
+# Oceans, 102(C12), 26455-26470. doi: https://doi.org/10.1029/97JC00880
+
+# URL of GISP2 to download the raw .txt file
+GISP2Link <- "https://www.ncei.noaa.gov/pub/data/paleo/icecore/greenland/
+summit/gisp2/isotopes/gispd18o-noaa.txt"
+
+# Create file pathway to identify the download and turn it into a csv
+GISP2Download <- file.path(Climate_Downloads, "IceCore.csv")
+
+# Download GISP2 data
+download.file(GISP2Link, destfile = GISP2Download, mode = "wb")
+
+# Read the GISP2 data that was downloaded
+IceCore <- read.csv(GISP2Download)
+
+# Remove all unnecessary metadata
+IceCore <- IceCore[-(1:208), -2]
+
+# Convert IceCore to a connection
+IceCore_c <- textConnection(IceCore)
+
+# Read the IceCore data and write it to itself
+IceCore <- read.delim(IceCore_c, sep = "\t", header = TRUE)
+
+# Close connection
+close(IceCore_c)
+
+# Remove the first column (depth data)
+IceCore <- IceCore[, -1]
+
+# Remove all rows with "NA" values (listed by authors as value 999999)
+IceCore <- IceCore[IceCore[, 1] != 999999, ]
+
+# Rename the data columns, the IceCore variable is now ready for use
+IceCore <- setNames(IceCore, c("d18O", "Age"))
+
+# Overwrite installed file with the csv made in R
+directory <- file.path(Climate_Downloads, "IceCore.csv")
+write.csv(IceCore, directory, row.names = FALSE)
+
+# Create a variable to produce the lowercase delta to accurately reference data
+delta <- intToUtf8(948)
+
+# Create an expression that ggplot can refer to when making labels
+# (will not otherwise)
+express2 <- expression(delta^"18" * " Oxygen")
+
+# Plot d18 O values for GISP2 to observe changes in the northern hemisphere
+# that could explain RoC shifts in South Africa
+Ice_Core <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("Greenland d18 O") +
+  xlab("Age (years BP)") +
+  ylab(express2) +
+  geom_smooth(
+    data = IceCore, aes(x = Age, y = d18O), method = "gam",
+    formula = y ~ s(x, k = 25, bs = "tp"), color = "black", linewidth = .5,
+    se = TRUE, fill = "orange"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0) +
+  ylim(-43, -33.5)
+
+# Plot d18 O values for Antarctica and Greenland, and Age
+Poles <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1], xmax =
+      background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1], xmax =
+        background[2, 2], ymin = ymin, ymax = ymax
+    ),
+    fill = "palegreen", alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_point(data = TD, aes(x = ï..Age, y = del18.O), color = "blue") +
+  geom_point(data = IceCore, aes(x = Age, y = d18O), color = "orange") +
+  geom_point() +
+  labs(
+    x = "Age (years BP)", y = delta^18 ~ "O Isotope Values (per mil)",
+    title = "GISP2 and Taylor Dome" ~ delta^18 ~ "O Isotope Values",
+    colour = "name1", shape = "name2"
+  ) +
+  geom_smooth(
+    data = TD, aes(x = ï..Age, y = del18.O), method = "gam",
+    formula = y ~ s(x, k = 25, bs = "tp"), color = "black", linewidth = .5,
+    se = TRUE, fill = "lightblue"
+  ) +
+  geom_smooth(
+    data = IceCore, aes(x = Age, y = d18O), method = "gam",
+    formula = y ~ s(x, k = 25, bs = "tp"), color = "black", linewidth = .5,
+    se = TRUE, fill = "#FFCC66"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0)
+
+# Save all climate-related plots
+ggsave(
+  filename = file.path(Climate_Output, "Taylor_Dome_Plot.svg"),
+  plot = TDd18, width = 11, height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(Climate_Output, "Ice_Core.svg"), plot = Ice_Core,
+  width = 11, height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(Climate_Output, "Poles.svg"), plot = Poles,
+  width = 11, height = 8, dpi = 1000
+)
+
+#### Resampling of continental data####
+## To rule out the edge effect as a potential factor in our data, we conducted a
+## resampling analysis where the smallest number of datasets across all time
+## bins is used as the number of samples taken from each time bin. This
+## resampling helps validate our results.
+
+# Filter Data frame to only Working Units and ROC
+Data_RoC_PerFrame <-
+  Data_RoC %>%
+  # Group Working units together by value
+  arrange(Working_Unit) %>%
+  # Remove bookends
+  filter(Working_Unit <= 20000) %>%
+  group_by(Working_Unit) %>%
+  summarize(ROC = list(ROC))
+
+# Find the window with the least number of data points so we can set the
+# resampling to that number
+min_sample <- Data_RoC_PerFrame %>%
+  mutate(frame_data = map_int(ROC, length)) %>%
+  summarise(
+    min_length =
+      min(frame_data)
+  ) %>%
+  pull(min_length)
+
+# Make an empty data frame for the for loop below
+combined_df <- data.frame()
+
+# Sample each window by the frame with the smallest number of data points
+# across the time series
+# Number of iterations, 1 to 1000
+for (i in 1:1000) {
+  combined_tibble <- Data_RoC_PerFrame %>%
+    # Sample the calculated RoC values by the minimum number of sample
+    mutate(ROC_Samps = lapply(ROC, function(x) sample(x, min_sample))) %>%
+    # Calculate 95th quantile
+    mutate(quantile_95 = sapply(ROC_Samps, function(x) quantile(x, 0.95)))
+
+  # Write values from iteration x to dataframe so we can plot the results
+  combined_df <- bind_rows(combined_df, as.data.frame(combined_tibble))
+}
+
+# Plot resampling results w/ GAM curve to rule out the edge effect in RoC plots
+Resample_All <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_point(
+    data = combined_df, aes(x = Working_Unit, y = quantile_95),
+    color = "black"
+  ) +
+  geom_smooth(
+    data = combined_df, aes(x = Working_Unit, y = quantile_95),
+    method = "gam", formula = y ~ s(x, k = 10, bs = "tp"), color = "blue",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  labs(x = "Age (years BP)", y = "RoC", title = "Data Resampling") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(22500, 0)
+
+# Filter Data frame to only Working Units and ROC
+Data_RoC_PerFrame <-
+  Data_RoC %>%
+  # Group Working units together by value
+  arrange(Working_Unit) %>%
+  # Remove Pleistocene and early Holocene records
+  filter(Working_Unit <= 10000) %>%
+  group_by(Working_Unit) %>%
+  summarize(ROC = list(ROC))
+
+# Find the window with the least number of data points so we can set the
+# resampling to that number
+min_sample <- Data_RoC_PerFrame %>%
+  mutate(frame_data = map_int(ROC, length)) %>%
+  summarise(
+    min_length =
+      min(frame_data)
+  ) %>%
+  pull(min_length)
+
+# Make an empty data frame for the for loop below
+combined_df <- data.frame()
+
+# Sample each window by the frame with the smallest number of data points across
+# the time series
+
+# Number of iterations, 1 to 1000
+for (i in 1:1000) {
+  combined_tibble <- Data_RoC_PerFrame %>%
+    # Sample the calculated RoC values by the minimum number of sample
+    mutate(ROC_Samps = lapply(ROC, function(x) sample(x, min_sample))) %>%
+    # Calculate 95th quantile
+    mutate(quantile_95 = sapply(ROC_Samps, function(x) quantile(x, 0.95)))
+  # Write values from iteration x to dataframe so we can plot the results
+  combined_df <- bind_rows(combined_df, as.data.frame(combined_tibble))
+}
+
+# Plot resampling results w/ GAM curve for the Holocene only to validate
+# observations in the complete time series
+Resample_Holocene <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  geom_point(
+    data = combined_df, aes(x = Working_Unit, y = quantile_95),
+    color = "black"
+  ) +
+  geom_smooth(
+    data = combined_df, aes(x = Working_Unit, y = quantile_95),
+    method = "gam", formula = y ~ s(x, k = 10, bs = "tp"), color = "blue",
+    linewidth = .5, se = TRUE, fill = "lightblue"
+  ) +
+  labs(
+    x = "Age (years BP)", y = "RoC",
+    title = "Data Resampling (Holocene Only)"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 22)) +
+  theme(axis.title = element_text(size = 24)) +
+  theme(plot.title = element_text(size = 26, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  xlim(11700, 0)
+
+# Save Plots
+ggsave(
+  filename = file.path(Resampling_Output, "DRAll.svg"),
+  plot = Resample_All, width = 11, height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(Resampling_Output, "DRHolocene.svg"),
+  plot = Resample_Holocene, width = 11, height = 8, dpi = 1000
+)
+
+#### Principal Components Analysis####
+## A Principal Components Analysis (PCA) finds underlying patterns within the
+## data, and in our case could indicate how much of an impact specific drivers
+## have on the RoCs.
+# Remove redundant columns to simplify data
+simplified_tibble <- tibble(
+  dataset.id = Data_RoC$dataset.id,
+  Working_Unit = Data_RoC$Working_Unit,
+  ROC = Data_RoC$ROC
+)
+
+# Calculate the average ROC for each time
+rearranged_tibble <- simplified_tibble %>%
+  group_by(dataset.id, Working_Unit) %>%
+  summarise(Mean_ROC = mean(ROC, na.rm = TRUE))
+
+# Define the full range of Row_Title values....
+Working_Units <- seq(500, 21500, by = 500)
+
+# ....To be added into the prior tibble so we know which time bins need an NA
+# assigned to them
+full_data <- expand.grid(
+  dataset.id = unique(rearranged_tibble$dataset.id),
+  Working_Unit = Working_Units
+) %>%
+  as_tibble()
+
+# Join the full_data and rearranged_tibble to get all NA values
+rearranged_tib <- rearranged_tibble %>%
+  full_join(full_data, by = c("dataset.id", "Working_Unit")) %>%
+  arrange(dataset.id, Working_Unit) %>%
+  group_by(dataset.id, Working_Unit) %>%
+  summarise(Mean_ROC = ifelse(is.na(Mean_ROC), NA, Mean_ROC), .groups = "drop")
+
+# Calculate the average for each time bin and replace the NA values with the
+# corresponding "row mean"
+row_means_tib_pc <- rearranged_tib %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)))
+
+# Reorient the tibble so all unique dataset IDs are one row and all time bins are
+# now columns for the PCA
+row_means_tib_pc <- row_means_tib_pc %>%
+  pivot_wider(
+    names_from = Working_Unit,
+    values_from = Mean_ROC
+  )
+
+# The package below is used to conduct the the PCA, which we use for finding
+# underlying trends in the data.
+if (!require("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+BiocManager::install("pcaMethods")
+
+# The above code will ask what to update - all/some/none (a/s/n)
+a
+
+# Add the packages that were installed so we can conduct the PCA
+library(BiocManager)
+library(pcaMethods)
+
+# Remove the last 4 columns in the new dataframe because
+# there is insufficient data and these points lie outside the time of interest
+# (22 ka). This line needs to convert the variable to a matrix to perform this
+# operation, and then revert it back to a dataframe to be used in the function
+# below.
+dataset_id_list <- row_means_tib_pc$dataset.id
+row_means_tib_pc_trunc <- row_means_tib_pc[, -c(1, 43, 44, 45, 46)]
+
+# This line is uses the PCA function from the BiocManager package so we can
+# explore underlying trends in the data.
+row_means_tib_pc_trunc <- t(as.data.frame(row_means_tib_pc_trunc))
+imp <- pca(row_means_tib_pc_trunc,
+  nPcs = 20, method = "svd", maxSteps = 100000,
+  threshold = 0.01
+)
+
+# These lines look at the 'individuals' within the PCA, with scores[,1]
+# corresponding to PC1 and scores[,2] corresponding to PC2. 'Individuals' refer
+# to the time bins and tells us strongly that loaded each is with the
+# corresponding component.
+PC1.ind <- as.data.frame(imp@scores[, 1])
+PC2.ind <- as.data.frame(imp@scores[, 2])
+
+
+# These lines look at the 'variables' within the PCA, with loadings[,1]
+# corresponding to PC1 and loadings[,2] corresponding to PC2. 'Variables' refer
+# to sites used and tells us how strongly each site corresponds component.
+PC1.var <- as.data.frame(imp@loadings[, 1]) # PC over time - variables
+PC2.var <- as.data.frame(imp@loadings[, 2]) # PC over time - variables
+
+# Combine variables into dataframe to organize the data...
+PC.inds <- data.frame(PC1.ind = PC1.ind, PC2.ind = PC2.ind)
+PC.vars <- data.frame(PC1.var = PC1.var, PC2.var = PC2.var)
+
+# ...and rename them for clairty
+# PC to Sites - variables
+PC.inds <- PC.inds %>% rename(
+  PC1.ind = imp.scores...1.,
+  PC2.ind = imp.scores...2.
+)
+# PC over time - individuals
+PC.vars <- PC.vars %>% rename(
+  PC1.vars = imp.loadings...1.,
+  PC2.vars = imp.loadings...2.
+)
+
+## PCA Regional Biplot
+# Filter data by region so the geographical data is clear at a glance in the
+# biplot
+PC.vars[3] <- as.numeric(dataset_id_list)
+colnames(PC.vars)[3] <- "dataset.id"
+
+# These lines finds each unique dataset id that is shared between the regional
+# datasets and PC.var so they can be distinguished in the biplot
+PC.vars.N <- PC.vars %>% filter(dataset.id %in%
+  as.numeric(unique(North$dataset.id)))
+PC.vars.S <- PC.vars %>% filter(dataset.id %in%
+  as.numeric(unique(South$dataset.id)))
+PC.vars.E <- PC.vars %>% filter(dataset.id %in%
+  as.numeric(unique(East$dataset.id)))
+PC.vars.W <- PC.vars %>% filter(dataset.id %in%
+  as.numeric(unique(West$dataset.id)))
+
+# Plot the biplot to ascertain regional associations between the PCs
+PCA.biplot <- ggplot() +
+  ggtitle("PCA Scores Plot (PC1 vs PC2)") +
+  xlab("PC1") +
+  ylab("PC2") +
+  geom_point(
+    data = PC.vars.N, aes(x = PC1.ind, y = PC2.ind), color = "blue",
+    shape = 1, stroke = 2
+  ) +
+  geom_point(
+    data = PC.vars.S, aes(x = PC1.ind, y = PC2.ind), color = "purple",
+    shape = 1, stroke = 2
+  ) +
+  geom_point(
+    data = PC.vars.E, aes(x = PC1.ind, y = PC2.ind), color = "black",
+    shape = 1, stroke = 2
+  ) +
+  geom_point(
+    data = PC.vars.W, aes(x = PC1.ind, y = PC2.ind), color = "orange",
+    shape = 1, stroke = 2
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  xlim(-1.1, 2.5) +
+  ylim(-2, 2.5)
+
+## PCA Data Plotting
+# Get dataset ids and location data
+pc.tib <- tibble(
+  dataset.id = Data_RoC$dataset.id,
+  site_lat = Data_RoC$site_lat,
+  site_lon = Data_RoC$site_lon
+)
+
+# Convert the tibble to a dataframe with any duplicate dataset IDs removed
+pc.tib <- as.data.frame(pc.tib[!duplicated(pc.tib), ])
+
+# Compile axes and sites to one variable for ease of use
+PCVar <- cbind(PC.vars$PC1.vars, PC.vars$PC2.vars, pc.tib)
+colnames(PCVar)[1] <- "PC1"
+colnames(PCVar)[2] <- "PC2"
+
+# Save PCVar so we have information on how each site corresponds to each PC
+# Name the file in your directory
+directory <- file.path(output_folder, "Principal_Component_Output.csv")
+write.csv(PCVar, directory, row.names = FALSE)
+
+# Assign the time bin PC values and as columns of data that can be plotted. The
+# third column should contain the values of all valid time bins
+PCsAge <- cbind(
+  as.data.frame(PC.inds$PC1.ind), as.data.frame(PC.inds$PC2.ind),
+  seq(500, 20500, by = 500)
+)
+# ...renamed columns for clarity
+colnames(PCsAge) <- c("PC1", "PC2", "Age")
+
+# Plot PC1 over time
+PC1 <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("Comparison Plot; Greenland Ice Core, Principal Components 1 and 2") +
+  xlab("Age (years BP)") +
+  ylab("PC1 Value") +
+  geom_line(
+    data = PCsAge, aes(x = Age, y = PC1), color = "black",
+    linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = PCsAge, aes(x = Age, y = PC1), color = "black", shape = 15,
+    stroke = 2.5
+  ) +
+  geom_smooth(
+    data = PCsAge, aes(x = Age, y = PC1), method = "gam",
+    formula = y ~ s(x, k = 8, bs = "tp"), color = "black", linewidth = .5,
+    se = FALSE, fill = "lightblue"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  labs(x = NULL) +
+  xlim(22500, 0) +
+  ylim(-1.1, 1.2)
+
+# Plot PC2 over time
+PC2 <- ggplot() +
+  geom_rect(data = background, aes(
+    xmin = background[1, 1],
+    xmax = background[1, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "skyblue", alpha = 0.1) +
+  geom_rect(
+    data = background, aes(
+      xmin = background[2, 1],
+      xmax = background[2, 2], ymin = ymin,
+      ymax = ymax
+    ), fill = "palegreen",
+    alpha = 0.1
+  ) +
+  geom_rect(data = background, aes(
+    xmin = background[3, 1],
+    xmax = background[3, 2], ymin = ymin,
+    ymax = ymax
+  ), fill = "gray", alpha = 0.1) +
+  ggtitle("PC2 Time Series") +
+  xlab("Age (years BP)") +
+  ylab("PC2 Value") +
+  geom_line(
+    data = PCsAge, aes(x = Age, y = PC2), color = "black",
+    linetype = "dashed", linewidth = .25
+  ) +
+  geom_point(
+    data = PCsAge, aes(x = Age, y = PC2), color = "black",
+    shape = 15, stroke = 2.5
+  ) +
+  geom_smooth(
+    data = PCsAge, aes(x = Age, y = PC2), method = "gam",
+    formula = y ~ s(x, k = 8, bs = "tp"), color = "black", linewidth = .5,
+    se = FALSE, fill = "lightblue"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  geom_segment(aes(x = 11700, xend = 11700, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 5500, xend = 5500, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 20000, xend = 20000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 15000, xend = 15000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  geom_segment(aes(x = 2500, xend = 2500, y = -Inf, yend = Inf),
+    linetype = "dashed"
+  ) +
+  geom_segment(aes(x = 13000, xend = 13000, y = -Inf, yend = Inf),
+    linetype = "dotted"
+  ) +
+  labs(title = NULL, x = NULL) +
+  xlim(22500, 0) +
+  ylim(-1.1, 1.2)
+
+# Plot PC1 Map to see geographic patterns
+PC1Map <- PCVar %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat,
+      colour = `PC1`
+    )
+  ) +
+  ggplot2::borders(
+    fill = "#6F6F6F",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 4
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 4
+  ) +
+  ggplot2::coord_quickmap( # for Africa
+    xlim = c(-16, 51),
+    ylim = c(-35, 37)
+  ) +
+  ggtitle("PC1 Loadings per Site") +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  scale_colour_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "orange",
+    midpoint = 0,
+    limits = c(-0.50, 0.50)
+  )
+
+# Plot PC2 Map to see geographic patterns
+PC2Map <- PCVar %>%
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = site_lon,
+      y = site_lat,
+      colour = `PC2`
+    )
+  ) +
+  ggplot2::borders(
+    fill = "#6F6F6F",
+    colour = NA
+  ) +
+  ggplot2::geom_point(
+    shape = 0,
+    size = 4
+  ) +
+  ggplot2::geom_point(
+    shape = 20,
+    size = 4
+  ) +
+  ggplot2::coord_quickmap( # for Africa
+    xlim = c(-16, 51),
+    ylim = c(-35, 37)
+  ) +
+  ggtitle("PC2 Loadings per Site") +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12)) +
+  theme(axis.title = element_text(size = 14)) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(panel.background = element_blank()) +
+  theme(axis.line = element_line(color = "black")) +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  scale_colour_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "orange",
+    midpoint = 0,
+    limits = c(-0.50, 0.50)
+  )
+
+# Combine map plots for figure use
+PCGrid <- grid.arrange(PC1Map, PC2Map, nrow = 1)
+
+# Save all plots
+ggsave(
+  filename = file.path(PCA_Output, "PC_biplot.svg"), plot = PCA.biplot,
+  width = 11, height = 8, dpi = 1000, device = "svg"
+)
+ggsave(
+  filename = file.path(PCA_Output, "PC1.svg"), plot = PC1, width = 11,
+  height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(PCA_Output, "PC2.svg"), plot = PC2, width = 11,
+  height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(PCA_Output, "PC1Map.svg"), plot = PC1Map, width = 11,
+  height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(PCA_Output, "PC2Map.svg"), plot = PC2Map, width = 11,
+  height = 8, dpi = 1000
+)
+ggsave(
+  filename = file.path(PCA_Output, "PCGrid.svg"), plot = PCGrid,
+  width = 16.5, height = 12, dpi = 1000
+)
+
+# Stop the code during "Run" so the user can manually loop the following section
+stop(paste("Hello! The code has successfully completed the script up to this
+point. However, one more step is required if you would like to reproduce the
+sequence plots. This has been implemented due to persistent issues with this
+looping step. Below this line is variable i=1. Please run the remaining code,
+and after each iteration, set i equal to the subsequent number (ex. 1 to 2, 2
+to 3, etc.). For this dataset, you will need to repeat this until i = ",
+  length(seq_along(sequence_peaks)), ". I apologize for the inconvenience.",
+  sep = ""
+))
+
+#### Manual Input Required for printing sequence plots####
+# Print all Ratepol sequences for use as figures or for interpretation
+# Done manually as looping with (i in seq_along(sequence_peaks)) returns blank
+# figures for (i in seq_along(sequence_peaks)) {
+i <- 1 # Remove if attempting to loop
+f <- as.numeric(names(sequence_peaks[i]))
+g <- paste(Sequence_Output_Plots, "/", f, "_SeqPoints.svg", sep = "")
+svg(g, width = 8.5, height = 11, bg = "white")
+RRatepol::plot_roc(
+  data_source = sequence_peaks[[i]],
+  peaks = TRUE,
+  trend = "trend_non_linear"
+)
+dev.off()
+#    }
+#### This is the end of the African Synthesis - thank you for using the script!##
+
+
+##### ACTIVE CODING AREA####
+
+# Install R-Ecopol for DCCA ordination
+remotes::install_github("HOPE-UIB-BIO/R-Ecopol-package")
+
+# Remove redundant columns to simplify data
+Interpolation_Input_Tibble <- tibble(
+  dataset.id = Data_RoC$dataset.id,
+  Age = Data_RoC$Age,
+  Working_Unit = Data_RoC$Working_Unit,
+  ROC = Data_RoC$ROC
+)
+
+# Divide the entire tibble by each site so we can interpolate each site
+# individually
+Interpolation_Input_Tibble_Split <- Interpolation_Input_Tibble %>%
+  split(.$dataset.id)
+
+# Interpolate each site for DCCA ordination
+Interpolation_Output_List <- lapply(
+  Interpolation_Input_Tibble_Split,
+  function(df) {
+    Working_Units <- seq(min(df$Working_Unit, na.rm = TRUE),
+      max(df$Working_Unit, na.rm = TRUE),
+      by = 500
+    )
+    interpolate <- approx(x = df$Age, y = df$ROC, xout = Working_Units)
+    tibble(Working_Unit = interpolate$x, ROC = interpolate$y)
+  }
+) %>%
+  lapply(drop_na)
