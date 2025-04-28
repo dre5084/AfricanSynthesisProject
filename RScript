@@ -2635,6 +2635,9 @@ dev.off()
 
 #####ACTIVE CODING AREA####
 
+#Install R-Ecopol for DCCA ordination
+remotes::install_github("HOPE-UIB-BIO/R-Ecopol-package")
+
 #Remove redundant columns to simplify data
 Interpolation_Input_Tibble = tibble(
   dataset.id = Data_RoC$dataset.id,
@@ -2642,14 +2645,18 @@ Interpolation_Input_Tibble = tibble(
   Working_Unit = Data_RoC$Working_Unit,
   ROC = Data_RoC$ROC)
 
+#Divide the entire tibble by each site so we can interpolate each site
+#individually
 Interpolation_Input_Tibble_Split <- Interpolation_Input_Tibble %>%
   split(.$dataset.id)
 
-list2env(
-  Interpolation_Input_Tibble_Split,
-  envir = .GlobalEnv
-)
-
-rearranged_tib
-
-
+#Interpolate each site for DCCA ordination
+Interpolation_Output_List <- lapply(Interpolation_Input_Tibble_Split, 
+                                    function(df) {
+  Working_Units <- seq(min(df$Working_Unit, na.rm = TRUE), 
+                       max(df$Working_Unit, na.rm = TRUE), by = 500)
+  interpolate <- approx(x = df$Age, y = df$ROC, xout = Working_Units)
+  tibble(Working_Unit = interpolate$x, ROC = interpolate$y)
+  
+}) %>%
+  lapply(drop_na)
