@@ -3,7 +3,7 @@ library(RUtilpol)
 library(here)
 library(RRatepol)
 
-n_rand <- 1e3
+n_rand <- 10e3
 use_parallel <- TRUE
 
 data_to_estimate_roc <-
