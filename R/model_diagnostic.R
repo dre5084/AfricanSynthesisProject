@@ -4,22 +4,25 @@ library(mvgam)
 
 
 hg_model <-
-RUtilpol::get_latest_file(
-  file_name = "hg_model",
-  dir = here::here("Data/Processed/")
-)
+  RUtilpol::get_latest_file(
+    file_name = "hg_model",
+    dir = here::here("Data/Processed/")
+  )
 
 # Diagnostics
-summary(hg_model,
+summary(
+  hg_model,
   include_betas = FALSE,
   smooth_test = FALSE
 )
 
-mcmc_plot(hg_model,
+mvgam::mcmc_plot(
+  hg_model,
   type = "rhat_hist"
 )
 
-mcmc_plot(hg_model,
+mvgam::mcmc_plot(
+  hg_model,
   variable = c(
     "sigma",
     "ar1",
@@ -30,59 +33,65 @@ mcmc_plot(hg_model,
 )
 
 # Unconditional posterior check
-pp_check(hg_model,
+mvgam::pp_check(hg_model,
   type = "dens_overlay_grouped",
   group = "series",
   ndraws = 50
 )
 
-# Inferences and unconditional predictions
-gratia::draw(hg_model, trend_effects = TRUE)
 
-plot_predictions(hg_model,
-  condition = c("time", "series"),
-  type = "response",
-  conf_level = 0.95
-)
+data_pred <-
+  marginaleffects::avg_predictions(
+    hg_model,
+    by = "time"
+  ) %>%
+  as.data.frame()
 
-plot_predictions(hg_model,
-  condition = c("time", "series", "series"),
-  points = 0.95
-)
-
-
-marginaleffects::avg_predictions(hg_model,
-  variable = "series"
-
-)
-
-p1 <-
-conditional_effects(
-  hg_model,
-  effects = "time",
-  type = "expected",
-  points = TRUE,
-  rug = TRUE
-) +
-  ggplot2::geom_point(
-    data = data_subset
+data_pred_indiv <-
+  marginaleffects::predictions(
+    hg_model,
+    newdata = datagrid(
+      time = 1:45,
+      series = insight::get_data(hg_model) %>%
+        dplyr::distinct(series) %>%
+        dplyr::pull(series)
+    )
   )
 
-class(p1)
-
-
-global_predictions <- marginaleffects::predictions(
-  model = hg_model,
-  newdata = data.frame(
-    time = 1:45
+ggplot2::ggplot(
+  mapping = ggplot2::aes(
+    x = time
   ),
-  by = "time"
-)
-
-# Plot
-library(ggplot2)
-ggplot(global_predictions, aes(x = time, y = estimate)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +
-  labs(title = "Posterior Global Trend", x = "Time", y = "Rate of Change") +
-  theme_minimal()
+) +
+  ggplot2::geom_ribbon(
+    data = data_pred,
+    ggplot2::aes(
+      ymin = conf.low,
+      ymax = conf.high
+    ),
+    alpha = 0.2
+  ) +
+  ggplot2::geom_line(
+    data = as.data.frame(data_pred),
+    ggplot2::aes(
+      y = estimate
+    ),
+    linewidth = 1.5,
+    col = "black"
+  ) +
+  ggplot2::geom_line(
+    data = as.data.frame(data_pred_indiv),
+    ggplot2::aes(
+      y = estimate,
+      col = series
+    ),
+    lty = 2,
+    linewidth = 1
+  ) +
+  ggplot2::geom_point(
+    data = insight::get_data(hg_model),
+    ggplot2::aes(
+      y = ROC_mean,
+      col = series
+    )
+  )

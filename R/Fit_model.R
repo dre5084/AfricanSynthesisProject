@@ -1,6 +1,8 @@
 devtools::install_github("nicholasjclark/mvgam")
 
 library(mvgam)
+library(tidyverse)
+library(RUtilpol)
 
 data_roc_rescaled <-
   RUtilpol::get_latest_file(
@@ -26,52 +28,41 @@ data_roc_rescaled_full <-
     time = as.integer(time)
   )
 
-
-data_subset <-
-  data_roc_rescaled_full %>%
-  dplyr::filter(series %in% unique(data_roc_rescaled_full$series)[1:3]) %>%
-  dplyr::mutate(
-    series = as.character(series),
-    series = as.factor(series)
-  )
-
 data_priors <-
   get_mvgam_priors(
     formula = ROC_mean ~ series,
     trend_formula = ~
       0 +
-        gp(time, k = 32) +
-        gp(time, by = trend, k = 20),
+        gp(time, k = 5, gr = FALSE) +
+        gp(time, by = trend, k = 10, gr = FALSE),
     trend_model = mvgam::AR(cor = TRUE),
     data = data_roc_rescaled_full,
     family = Gamma()
   )
 
-as.data.frame(data_priors) %>%
-  tibble::as_tibble() %>%
-  View()
-
 hg_model <-
   mvgam::mvgam(
+    data = data_roc_rescaled_full,
     formula = ROC_mean ~ series,
     trend_formula = ~
       0 +
-        gp(time, k = 32) +
-        gp(time, by = trend, k = 20),
+        gp(time, k = 5, gr = FALSE) +
+        gp(time, by = trend, k = 10, gr = FALSE),
     trend_model = mvgam::AR(cor = TRUE),
-    data = data_subset,
     family = Gamma(),
     share_obs_params = TRUE,
     control = list(
       adapt_delta = 0.95,
       max_treedepth = 15
     ),
+    priors = data_priors,
     silent = 1,
-    chains = 10,
-    burnin = 750,
-    samples = 2000,
+    chains = parallelly::availableCores(logical = FALSE) - 1,
+    burnin = 1000,
+    samples = 5000,
     thin = 5,
-    parallel = TRUE
+    parallel = TRUE,
+    backend = "cmdstanr"
   )
 
 
