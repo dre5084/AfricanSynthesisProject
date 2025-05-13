@@ -16,6 +16,14 @@ summary(
   smooth_test = FALSE
 )
 
+plot(hg_model)
+
+
+mvgam:::plot.mvgam(hg_model, type = "series", series = 1)
+mvgam:::plot.mvgam(hg_model, type = "pterms")
+mvgam:::plot.mvgam(hg_model, type = "trend", series = 1)
+
+
 mvgam::mcmc_plot(
   hg_model,
   type = "rhat_hist"
@@ -23,11 +31,7 @@ mvgam::mcmc_plot(
 
 mvgam::mcmc_plot(
   hg_model,
-  variable = c(
-    "sigma",
-    "ar1",
-    "shape"
-  ),
+  variable = "sigma",
   regex = TRUE,
   type = "trace"
 )
@@ -94,4 +98,8 @@ ggplot2::ggplot(
       y = ROC_mean,
       col = series
     )
-  )
+  ) +
+  ggplot2::coord_cartesian(
+    ylim = c(0, 1.25) 
+  ) +
+  ggplot2::facet_wrap(~series)
