@@ -7,15 +7,16 @@ age_max <- 22.5e3
 age_min <- 0
 age_step <- 500
 
-vec_dataset_east <-
-  RUtilpol::get_latest_file(
-    file_name = "data_east",
-    dir = here::here("Data/Processed/")
+vec_datasets <-
+  readr::read_rds(
+    here::here(
+      "Data/Input/data_assembly_2023-06-05__4085c7bda5670c4d0b58c91c41b23382__.rds"
+    )
   ) %>%
   dplyr::pull(dataset_id)
 
 data_roc <-
-  vec_dataset_east %>%
+  vec_datasets %>%
   rlang::set_names() %>%
   purrr::map(
     .x = ,
@@ -49,24 +50,8 @@ data_roc_binned <-
     .groups = "drop"
   )
 
-data_age_ref <-
-  tibble::tibble(
-    BIN = seq(age_min, age_max, age_step)
-  ) %>%
-  dplyr::mutate(
-    time = 1 + (BIN / age_step - (age_max / age_step)) * (-1)
-  ) %>%
-  dplyr::arrange(time)
-
-data_roc_rescaled <-
-  data_roc_binned %>%
-  dplyr::left_join(
-    data_age_ref,
-    by = "BIN"
-  )
-
 RUtilpol::save_latest_file(
-  data_roc_rescaled,
-  file_name = "data_roc_rescaled",
-  dir = here::here("Data/Processed/")
+  data_roc_binned,
+  file_name = "data_roc_binned",
+  dir = here::here("Data/Processed/Roc_binned"),
 )
