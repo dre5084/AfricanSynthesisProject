@@ -3,8 +3,6 @@ library(here)
 library(RUtilpol)
 library(REcopol)
 
-age_max <- 22.5e3
-age_min <- 0
 age_step <- 500
 
 vec_datasets <-
