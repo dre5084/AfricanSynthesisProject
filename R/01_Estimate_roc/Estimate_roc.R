@@ -7,9 +7,10 @@ n_rand <- 10e3
 use_parallel <- TRUE
 
 data_to_estimate_roc <-
-  RUtilpol::get_latest_file(
-    file_name = "data_east",
-    dir = here::here("Data/Processed/")
+  readr::read_rds(
+    here::here(
+      "Data/Input/data_assembly_2023-06-05__4085c7bda5670c4d0b58c91c41b23382__.rds"
+    )
   ) %>%
   dplyr::select(
     dataset_id,
@@ -19,6 +20,7 @@ data_to_estimate_roc <-
   )
 
 purrr::pwalk(
+  .progress = TRUE,
   .l = list(
     data_to_estimate_roc$dataset_id, # ..1
     data_to_estimate_roc$levels, # ..2
@@ -31,6 +33,25 @@ purrr::pwalk(
         "Estimating ROC for dataset_id: ",
         ..1, "\n"
       )
+
+      # check the presence of the result
+      # in the directory
+
+      is_present <-
+        RUtilpol::get_latest_file_name(
+          dir = here::here("Data/Processed/Roc"),
+          file_name = ..1,
+          verbose = FALSE
+        ) %>%
+        is.na() %>%
+        isFALSE()
+
+      # if the result is already present, return early
+      if (
+        isTRUE(is_present)
+      ) {
+        return()
+      }
 
       set.seed(42)
 
