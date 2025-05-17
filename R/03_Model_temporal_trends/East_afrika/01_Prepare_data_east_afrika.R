@@ -51,8 +51,12 @@ data_to_fit_east_afrika <-
   add_age_reference() %>%
   # fill in hole in the age series by interpolating the ROC_mean values
   fill_age_holes() %>%
+  add_age_reference(
+    link_by = "time"
+  )  %>% 
   dplyr::mutate(
     time = as.integer(time),
+    age = as.integer(age),
     series = as.factor(dataset_id)
   ) %>%
   dplyr::select(-dataset_id)
