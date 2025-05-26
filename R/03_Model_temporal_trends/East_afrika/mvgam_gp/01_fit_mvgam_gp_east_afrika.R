@@ -182,20 +182,20 @@ mod_mvgam_gp <-
     use_lv = TRUE,
     share_obs_params = TRUE,
     noncentred = TRUE,
-    priors = data_priors,
+    # priors = data_priors,
     control = list(
       adapt_delta = 0.95,
       max_treedepth = 15,
       init = 0
     ),
-    chains = 12,
+    chains = parallelly::availableCores(logical = FALSE) - 1,
     # this is set to very small numbers to make fit the model quickly
-    samples = 100,
-    burnin = 200,
+    samples = 500,
+    burnin = 500,
     thin = 5,
     silent = 1,
     backend = "cmdstanr",
-    parallel = FALSE
+    parallel = TRUE
   )
 
 RUtilpol::save_latest_file(
