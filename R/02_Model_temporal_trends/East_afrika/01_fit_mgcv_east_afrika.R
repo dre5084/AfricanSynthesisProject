@@ -59,6 +59,6 @@ if (
 
 RUtilpol::save_latest_file(
   mod_mgcv,
-  file_name = "mod_mgcv",
+  file_name = "mod_mgcv_east_afrika",
   dir = here::here("Data/Processed/Models/East_afrika/")
 )

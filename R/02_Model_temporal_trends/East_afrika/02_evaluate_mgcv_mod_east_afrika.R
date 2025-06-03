@@ -12,7 +12,7 @@ data_to_fit <-
 
 mod_mgcv <-
   RUtilpol::get_latest_file(
-    file_name = "mod_mgcv",
+    file_name = "mod_mgcv_east_afrika",
     dir = here::here("Data/Processed/Models/East_afrika/")
   )
 
