@@ -196,7 +196,6 @@ mod_mvgam_smooth <-
       init = 0
     ),
     chains = parallelly::availableCores(logical = FALSE) - 1,
-    # this is set to very small numbers to make fit the model quickly
     samples = 500,
     burnin = 500,
     thin = 5,
