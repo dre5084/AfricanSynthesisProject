@@ -12,7 +12,7 @@ vec_dataset_North <-
     )
   ) %>%
   dplyr::filter(long <= 40) %>% #Excludes Arabia and Madagascar data
-  dplyr::filter(lat =< 10) %>%
+  dplyr::filter(lat <= 10) %>%
   dplyr::pull(dataset_id)
 
 data_roc_North_afrika <-
