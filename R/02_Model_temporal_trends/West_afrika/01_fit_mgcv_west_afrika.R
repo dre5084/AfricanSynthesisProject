@@ -12,7 +12,7 @@ verbose <- FALSE
 
 data_to_fit <-
   RUtilpol::get_latest_file(
-    file_name = "data_to_fit_West_afrika",
+    file_name = "data_to_fit_west_afrika",
     dir = here::here("Data/Processed/Data_to_fit/West_afrika")
   ) %>%
   tidyr::drop_na()
@@ -59,6 +59,6 @@ if (
 
 RUtilpol::save_latest_file(
   mod_mgcv,
-  file_name = "mod_mgcv_West_afrika",
+  file_name = "mod_mgcv_west_afrika",
   dir = here::here("Data/Processed/Models/West_afrika/")
 )
