@@ -5,7 +5,7 @@ library(RUtilpol)
 verbose <- FALSE
 
 # subset the data to the West Africa region
-vec_dataset_West <-
+vec_dataset_west <-
   readr::read_rds(
     here::here(
       "Data/Input/data_assembly_2023-06-05__4085c7bda5670c4d0b58c91c41b23382__.rds"
@@ -17,8 +17,8 @@ vec_dataset_West <-
   dplyr::filter(long > 25) %>% 
   dplyr::pull(dataset_id)
 
-data_roc_West_afrika <-
-  vec_dataset_West %>%
+data_roc_west_afrika <-
+  vec_dataset_west %>%
   rlang::set_names() %>%
   purrr::map(
     .x = ,
@@ -44,8 +44,8 @@ data_roc_West_afrika <-
   purrr::keep(~ is.data.frame(.x)) %>%
   dplyr::bind_rows(.id = "dataset_id")
 
-data_to_fit_West_afrika <-
-  data_roc_West_afrika %>%
+data_to_fit_west_afrika <-
+  data_roc_west_afrika %>%
   dplyr::mutate(
     age = as.integer(Age),
     series = as.factor(dataset_id)
@@ -67,14 +67,14 @@ if (
   message(
     paste0(
       "Number of unique series: ",
-      length(unique(data_to_fit_West_afrika$series))
+      length(unique(data_to_fit_west_afrika$series))
     )
   )
   
-  summary(data_to_fit_West_afrika) %>%
+  summary(data_to_fit_west_afrika) %>%
     print()
   
-  data_to_fit_West_afrika %>%
+  data_to_fit_west_afrika %>%
     drop_na() %>%
     dplyr::group_by(series) %>%
     dplyr::summarise(
@@ -86,7 +86,7 @@ if (
 }
 
 RUtilpol::save_latest_file(
-  data_to_fit_West_afrika,
-  file_name = "data_to_fit_West_afrika",
+  data_to_fit_west_afrika,
+  file_name = "data_to_fit_west_afrika",
   dir = here::here("Data/Processed/Models/Data_to_fit"),
 )
