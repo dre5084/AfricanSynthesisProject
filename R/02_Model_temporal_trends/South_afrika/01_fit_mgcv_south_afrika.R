@@ -12,7 +12,7 @@ verbose <- FALSE
 
 data_to_fit <-
   RUtilpol::get_latest_file(
-    file_name = "data_to_fit_South_afrika",
+    file_name = "data_to_fit_south_afrika",
     dir = here::here("Data/Processed/Data_to_fit/South_afrika")
   ) %>%
   tidyr::drop_na()
