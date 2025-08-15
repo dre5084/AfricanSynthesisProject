@@ -27,7 +27,7 @@ data_pred <-
       )
     ) %>%
       dplyr::mutate(
-        series = data_to_fit$series[1]
+        series = unique(data_to_fit$series)[2]
       ),
     exclude_var = mod_mgcv %>%
       gratia::smooths() %>%
@@ -62,13 +62,13 @@ p1 <-
     ),
   ) +
   ggplot2::geom_point(
-    data = insight::get_data(mod_mgcv),
+    data = data_to_fit,
     ggplot2::aes(
       col = series
     )
   ) +
   ggplot2::coord_cartesian(
-    ylim = c(0, 1.5)
+    ylim = c(0, 2)
   ) +
   ggplot2::scale_x_continuous(
     transform = "reverse"
@@ -81,8 +81,8 @@ p1 +
   ggplot2::geom_ribbon(
     data = data_pred,
     ggplot2::aes(
-      ymin = upr,
-      ymax = lwr
+      ymin = lwr,
+      ymax = upr
     ),
     alpha = 0.2
   ) +
@@ -111,3 +111,47 @@ p1 +
     linewidth = 1
   ) +
   ggplot2::facet_wrap(~series)
+
+
+# Note REcopol::predic_model() is using marginal effects
+# under the hood. I try to confirm that the predictions are the same
+# by comparing them with the marginal effects
+
+data_pred_marginal <-
+  marginaleffects::predictions(
+    model = mod_mgcv,
+    newdata = tibble::tibble(
+      age = seq(
+        from = 0,
+        to = 22e3,
+        length.out = 100
+      )
+    ) %>%
+      dplyr::mutate(
+        series = unique(data_to_fit$series)[2]
+      ),
+    exclude = mod_mgcv %>%
+      gratia::smooths() %>%
+      stringr::str_subset(., "series")
+  ) %>%
+  tibble::as_tibble() %>%
+  dplyr::select(age, estimate, conf.low, conf.high)
+
+p1 +
+  ggplot2::geom_ribbon(
+    data = data_pred_marginal,
+    ggplot2::aes(
+      y = estimate,
+      ymin = conf.low,
+      ymax = conf.high
+    ),
+    alpha = 0.2
+  ) +
+  ggplot2::geom_line(
+    data = as.data.frame(data_pred_marginal),
+    mapping = ggplot2::aes(
+      y = estimate
+    ),
+    linewidth = 1.5,
+    col = "black"
+  )

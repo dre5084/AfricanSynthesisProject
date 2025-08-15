@@ -11,7 +11,7 @@ vec_dataset_north <-
       "Data/Input/data_assembly_2023-06-05__4085c7bda5670c4d0b58c91c41b23382__.rds"
     )
   ) %>%
-  dplyr::filter(long <= 40) %>% #Excludes Arabia and Madagascar data
+  dplyr::filter(long <= 40) %>% # Excludes Arabia and Madagascar data
   dplyr::filter(lat <= 10) %>%
   dplyr::pull(dataset_id)
 
@@ -29,8 +29,7 @@ data_roc_north_afrika <-
           ..1, "\n"
         )
       }
-      
-      
+
       RUtilpol::get_latest_file(
         file_name = ..1,
         dir = here::here("Data/Processed/Roc"),
@@ -68,10 +67,10 @@ if (
       length(unique(data_to_fit_north_afrika$series))
     )
   )
-  
+
   summary(data_to_fit_north_afrika) %>%
     print()
-  
+
   data_to_fit_north_afrika %>%
     drop_na() %>%
     dplyr::group_by(series) %>%
@@ -86,5 +85,5 @@ if (
 RUtilpol::save_latest_file(
   data_to_fit_north_afrika,
   file_name = "data_to_fit_north_afrika",
-  dir = here::here("Data/Processed/Models/Data_to_fit"),
+  dir = here::here("Data/Processed/Data_to_fit/North_afrika"),
 )
