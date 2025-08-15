@@ -88,5 +88,5 @@ if (
 RUtilpol::save_latest_file(
   data_to_fit_east_afrika,
   file_name = "data_to_fit_east_afrika",
-  dir = here::here("Data/Processed/Models/Data_to_fit"),
+  dir = here::here("Data/Processed/Data_to_fit/East_afrika"),
 )
