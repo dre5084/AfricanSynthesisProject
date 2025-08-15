@@ -30,7 +30,7 @@ if (
       y = "Frequency",
       x = "ROC"
     )
-  
+
   summary(data_to_fit)
 }
 
@@ -40,13 +40,13 @@ mod_mgcv <-
     x_var = "age",
     y_var = "ROC",
     group_var = "series",
-    weights_var = "roc_error",
-    error_family = "mgcv::tw(link = 'log')",
+    #weights_var = "roc_error",
+    error_family = "stats::gaussian(link = 'log')",
     smooth_basis = "cr",
     sel_k = 15,
     data_source = data_to_fit,
     common_trend = TRUE,
-    use_parallel = FALSE,
+    use_parallel = TRUE,
     max_iterations = 1e3,
     verbose = verbose
   )
@@ -60,5 +60,6 @@ if (
 RUtilpol::save_latest_file(
   mod_mgcv,
   file_name = "mod_mgcv_north_afrika",
-  dir = here::here("Data/Processed/Models/North_afrika/")
+  dir = here::here("Data/Processed/Models/North_afrika/"),
+  preset = "archive"
 )
